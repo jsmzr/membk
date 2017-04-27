@@ -33,16 +33,15 @@ DATA_FOOT_LEN = len(DATA_FOOT)
 DATA_SUCCESS_FOOT_LEN = len(b'\r\nEND\r\n')
 DATA_BREAK_LEN = len(b'\r\n')
 
-
 '''
 set <key> <flags> <time> <bytes> /r/n <value> /r/n
 get <key>
 stats cachedump <items> <number> 
 '''
-cmd_set = 'set {} {} {} {}\r\n'
+cmd_set = 'set {0} {1} {2} {3}\r\n'
 cmd_set_foot = b'\r\n'
-cmd_get = 'get {} \r\n'
-cmd_cachedump = 'stats cachedump {} {} \r\n'
+cmd_get = 'get {0} \r\n'
+cmd_cachedump = 'stats cachedump {0} {1} \r\n'
 
 '''
 stats_info:
@@ -77,7 +76,7 @@ def usage():
         ''')
 
 
-def createSocket(socket_type):
+def createSocket(socket_type, backup_host='127.0.0.1', backup_port=11211):
     socket.setdefaulttimeout(time_out)
     if socket_type == 1:
         global client
@@ -86,6 +85,7 @@ def createSocket(socket_type):
     else :
         global rm_server
         rm_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        rm_server.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536) # restore redhat6 python2.6.6 send data error
         rm_server.connect((backup_host, backup_port))
 
 def getMemInfo():
@@ -114,6 +114,7 @@ def getKeys(*item_info):
     tmp = re.compile(r'ITEM\s.+\s\[.+\]').findall(getResponse((cmd_cachedump.format(*item_info)).encode()).decode())
     key_info_list = []
     for i in tmp:
+        # print(i)
         tmp_key_info = i.split(' ')
         key_info_list.append([tmp_key_info[1], tmp_key_info[2][1:], tmp_key_info[-2]])
     return key_info_list
@@ -127,14 +128,17 @@ def getData(key_info):
     tmp_response = getResponse(cmd_get.format(key_info[0]).encode())
     if len(tmp_response) > DATA_FOOT_LEN + DATA_HEAD_LEN:
         data_index = -int(key_info[1]) - DATA_SUCCESS_FOOT_LEN
-        tmp_list = [key_info[0],
-          int((tmp_response[DATA_HEAD_LEN + len(key_info[0]) + 2 : data_index - 1 - DATA_BREAK_LEN - len(key_info[1])]).decode()),
-          key_info[2],
-          key_info[1],
-          tmp_response[data_index : -DATA_SUCCESS_FOOT_LEN]]
-        
-        if checkCacheData(tmp_list):
-            return tmp_list
+        try:
+            tmp_list = [key_info[0],
+            int((tmp_response[DATA_HEAD_LEN + len(key_info[0]) + 2 : data_index - 1 - DATA_BREAK_LEN - len(key_info[1])]).decode()),
+            key_info[2],
+            key_info[1],
+            tmp_response[data_index : -DATA_SUCCESS_FOOT_LEN]]
+            
+            if checkCacheData(tmp_list):
+                return tmp_list
+        except Exception as e:
+            print(e, key_info[0])
 
 def getResponse(cmd, pack_size = 1024):
     global client
@@ -147,9 +151,9 @@ def getResponse(cmd, pack_size = 1024):
             return response
 
 # param : key_name, flags, time, bytes, value
-def pushCache(q):
-    createSocket(2)
+def pushCache(q, backup_host, backup_port):
     global push_count, push_count_success
+    createSocket(2, backup_host, backup_port)
     push_count = 0
     push_count_success = 0
     while True:
@@ -159,26 +163,24 @@ def pushCache(q):
                 break
             push_count += 1
             rm_server.send(cmd_set.format(*cache_data[:-1]).encode()+cache_data[-1]+cmd_set_foot)
-            response = rm_server.recv(64)
-            if response in CMD_STORED:
-                push_count_success += 1
-            else:
-                print(response)
+            try:
+                response = rm_server.recv(64)
+                if response in CMD_STORED:
+                    push_count_success += 1
+                else:
+                    print(response)
+            except Exception as e:
+                print(e,cache_data[0])
     print('push items %d success %d' % (push_count, push_count_success))
-
+    rm_server.close()
 
 # check data and param    
 def checkHostAndPort(host, port):
-    if not(re.compile(r'(\d{1,3}\.){3}(\d{1,3})').match(host)):
-        return False
-    port = int(port)
-    if port <=0 or port > 65535:
-        return False
-    return True
+    return re.compile(r'(\d{1,3}\.){3}(\d{1,3})').match(host) and port > 0 and port < 65535
 
 def checkCacheData(cache_data):
-    if cache_data and int(cache_data[-2]) == len(cache_data[-1]):
-        return True
+    return cache_data and int(cache_data[-2]) == len(cache_data[-1])
+    
 
 def checkBackupFile(file_path, file_name):
     if not file_path or file_path == '.':
@@ -212,7 +214,7 @@ def checkAndCreateFile(path, name):
 def splitTrans(param):
     print(param)
     if param:
-        if os.name == 'prosix':
+        if os.name == 'posix':
             return param.replace('\\', '/')
         return param.replace('/', '\\')    
 
@@ -221,6 +223,7 @@ def splitTrans(param):
 
 # get data with queue and write file 
 def writeFile(q, file_path):
+    data_count = 0
     with open(file_path, 'wb') as backup_file:
         while True :
             cache_item = q.get()
@@ -228,7 +231,8 @@ def writeFile(q, file_path):
                 break
             if cache_item:
                 pickle.dump(cache_item, backup_file)
-
+                data_count += 1
+    print('save cache data total:', data_count)
 
 # read data by file and put queue 
 def readFile(q, file_path):
@@ -246,32 +250,40 @@ def readFile(q, file_path):
 
 # backup to remote server by file
 def backupMemServer(q):
-    createSocket(1)
-    mem_curr_time = int(getMemInfo()['time'])
-    mem_max_time = mem_curr_time + 60 * 60 *24 *30
-    cache_items = getItems()
-    items_size = len(cache_items)
-    items_count = 0
-    for curr_item in cache_items:
-        keys = getKeys(*curr_item)
-        keys_size = curr_item[1]
-        key_count = 0
-        for curr_key in keys:
-           tmp_data = getData(curr_key)
+    try: 
+        createSocket(1)
+        mem_curr_time = int(getMemInfo()['time'])
+        mem_max_time = mem_curr_time + 60 * 60 *24 *30
+        cache_items = getItems()
+        items_size = len(cache_items)
+        items_count = 0
+        cache_data = 0
+        for curr_item in cache_items:
+            keys = getKeys(*curr_item)
+            keys_size = curr_item[1]
+            key_count = 0
+            for curr_key in keys:
+                tmp_data = getData(curr_key)
            
-           if tmp_data:
-               exp_time = tmp_data[2]
-               if int(exp_time) < mem_max_time:
-                   tmp_data[2] = int(exp_time) - mem_curr_time
-               else:
-                   tmp_data[2] = 0
-               print(tmp_data[2] // 60 // 60 // 24, tmp_data[2] // 60 % 60, tmp_data[2] % 60)
-               q.put(tmp_data)
-               key_count += 1
-        print('item %s number %s compile %s' % (curr_item[0], curr_item[1], key_count))
-        items_count += 1
-    print('items total %s compile %s' % (items_size, items_count))
-    q.put('finish')
+                if tmp_data:
+                    exp_time = tmp_data[2]
+                    if int(exp_time) < mem_max_time:
+                        tmp_data[2] = int(exp_time) - mem_curr_time
+                    else:
+                        tmp_data[2] = 0
+                    q.put(tmp_data)
+                    key_count += 1
+                    cache_data += 1
+            print('item %s number %s compile %s' % (curr_item[0], curr_item[1], key_count))
+            items_count += 1
+        total_cache_data = sum([int(v[1]) for v in cache_items])
+        print('items total %s compile %s , total cache data %s compile %s' % (items_size, items_count, total_cache_data, cache_data))
+        q.put('finish')
+    except Exception as e:
+        raise e
+    finally:
+        q.put('finish')
+    
 
 
 if __name__ == '__main__':
@@ -289,9 +301,9 @@ if __name__ == '__main__':
         elif cmd_head in ('-n', '--name'):
             file_name = argv[2+i]
         elif cmd_head in ('-bh', '--backup_host'):
-            bk_host = argv[2+i]
+            backup_host = argv[2+i]
         elif cmd_head in ('-bp', '--backup_port'):
-            bk_port = int(argv[2+i])
+            backup_port = int(argv[2+i])
         elif cmd_head in ('-t', '--type'):
             # operat_type 1 backup to local file 2 backup to remote 3 restore to remote by local file
             operat_type = argv[2+i]
@@ -299,8 +311,10 @@ if __name__ == '__main__':
             file_path = argv[2+i]
     q = Queue()
     pp = None
+    pw = None
+    client = None
+    rm_server = None
     try:
-
         if not operat_type:
             print('error: use -t or --type set your operation')
             sys.exit()
@@ -311,18 +325,23 @@ if __name__ == '__main__':
             backupMemServer(q)
             pw.join()
         elif '2' == operat_type:
-            pp = Process(target=pushCache, args=(q,))
+            pp = Process(target=pushCache, args=(q, backup_host, backup_port))
             pp.start()
             backupMemServer(q)
             pp.join()
         elif '3' == operat_type:
             file_add = checkBackupFile(file_path, file_name)
-            pp = Process(target=pushCache, args=(q,))
+            pp = Process(target=pushCache, args=(q, backup_host, backup_port))
             pp.start()
             readFile(q, file_add)
             pp.join()
     except Exception as e:
         print(e)
+    finally:
+        if client:
+            client.close()
+        if rm_server:
+            rm_server.close()
         if pw:
             pw.join()
         if pp:
