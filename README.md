@@ -24,3 +24,18 @@ python app.py -h ```memcahehost``` -p ```memcache port``` -t ```bcakup type```
 
 
 > 需要注意的是，这个脚本是基于**python3.x**编写的，并且memcache的版本是**1.4.2**，当然如果版本有些差异可以尝试自己修改脚本来完善功能
+
+*** 20170427 ***
+1. 修复linux下创建文件错误的问题
+2. 代码兼容python2.6.6+改造
+3. 修复redhat e6及部分linux发行版写入memcached服务器时错误（socket发送缓存区设置过小导致一次数据分多次发送）
+
+FQA:
+1. 在python2.7-版本、linux下偶尔出现Exception in thread QueueFeederThread (most likely raised during interpreter shutdown)
+2. 数据过大时出现超时异常
+
+如果允许可以切换至windows，python2.7+环境下解决以上问题，欢迎各位指导解决以上问题
+
+
+
+
