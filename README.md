@@ -30,11 +30,17 @@ python app.py -h ```memcahehost``` -p ```memcache port``` -t ```bcakup type```
 2. 代码兼容python2.6.6+改造
 3. 修复redhat e6及部分linux发行版写入memcached服务器时错误（socket发送缓存区设置过小导致一次数据分多次发送）
 
+*** 20170428 ***
+1. 重写key名匹配方法，修复非ascii编码decode时出错问题
+
+
 FQA:
 1. 在python2.7-版本、linux下偶尔出现Exception in thread QueueFeederThread (most likely raised during interpreter shutdown)
 2. 数据过大时出现超时异常
 
 如果允许可以切换至windows，python2.7+环境下解决以上问题，欢迎各位指导解决以上问题
+
+
 
 
 
