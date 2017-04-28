@@ -38,7 +38,8 @@ set <key> <flags> <time> <bytes> /r/n <value> /r/n
 get <key>
 stats cachedump <items> <number> 
 '''
-cmd_set = 'set {0} {1} {2} {3}\r\n'
+cmd_set_head = b'set '
+cmd_set = ' {0} {1} '
 cmd_set_foot = b'\r\n'
 cmd_get = 'get {0} \r\n'
 cmd_cachedump = 'stats cachedump {0} {1} \r\n'
@@ -89,7 +90,12 @@ def createSocket(socket_type, backup_host='127.0.0.1', backup_port=11211):
         rm_server.connect((backup_host, backup_port))
 
 def getMemInfo():
-    tmp = re.compile(r'\S+\s\d+').findall(getResponse(CMD_STATS).decode())
+    tmp = None
+    res = getResponse(CMD_STATS)
+    try:
+        tmp = re.compile(r'\S+\s\d+').findall(res.decode())
+    except Exception as e:
+        print(e, res)
     if not tmp:
         raise Exception('get memcache info faild')
     response = {}
@@ -100,7 +106,12 @@ def getMemInfo():
 
 # {items_id : item_num,...}
 def getItems():
-    tmp = re.compile(r'items:\d+:number\s\d+').findall(getResponse(CMD_STATS_ITEMS).decode())
+    tmp = None
+    res = getResponse(CMD_STATS_ITEMS)
+    try:
+        tmp = re.compile(r'items:\d+:number\s\d+').findall(res.decode())
+    except Exception as e:
+        print(e, res)
     if not tmp:
         raise Exception('get items info faild')
     response = []
@@ -111,13 +122,40 @@ def getItems():
 
 # [[key_name, key_size, time],...]
 def getKeys(*item_info):
-    tmp = re.compile(r'ITEM\s.+\s\[.+\]').findall(getResponse((cmd_cachedump.format(*item_info)).encode()).decode())
+    tmp = getResponse(cmd_cachedump.format(*item_info).encode())
     key_info_list = []
-    for i in tmp:
-        # print(i)
-        tmp_key_info = i.split(' ')
-        key_info_list.append([tmp_key_info[1], tmp_key_info[2][1:], tmp_key_info[-2]])
+    kl = len(tmp)
+    start_index=[]
+    for i in range(kl-4):
+        if tmp[i:i+4] == b'ITEM':
+            start_index.append(i)
+    key_count = len(start_index)
+    for i in range(key_count):
+        if i == key_count-1:
+            key_info_list.append(resolveKey(tmp, start_index[i], kl))
+        else:
+            key_info_list.append(resolveKey(tmp, start_index[i], start_index[i+1]))
     return key_info_list
+
+def resolveKey(keys_data, start, end):
+    
+    key_start = start+5
+    for i in range(key_start, end-2):
+        if keys_data[i : i+2] == b' [':
+            key_name = keys_data[key_start: i]
+            if b'LOCK' in key_name:
+                print(str(key_name))
+            time_start = 0
+            key_byte = b''
+            for ii in range(i, end-2):
+                if keys_data[ii: ii+2] == b'b;':
+                    key_byte = keys_data[i+2: ii-1]
+                    time_start = ii + 3
+                if keys_data[ii: ii+2] == b's]':
+                    key_time = keys_data[time_start: ii-1]
+                    return [key_name, key_byte, key_time]
+                    break
+
 
 # <del>[key_name, data_size, time, flags, data]</del>
 '''
@@ -125,7 +163,8 @@ value key_name flags
 '''
 # [key_name, flags, time, data_size, data]
 def getData(key_info):
-    tmp_response = getResponse(cmd_get.format(key_info[0]).encode())
+    # tmp_response = getResponse(cmd_get.format(key_info[0]).encode())
+    tmp_response = getResponse(b'get ' + key_info[0] + b' \r\n')
     if len(tmp_response) > DATA_FOOT_LEN + DATA_HEAD_LEN:
         data_index = -int(key_info[1]) - DATA_SUCCESS_FOOT_LEN
         try:
@@ -153,6 +192,7 @@ def getResponse(cmd, pack_size = 1024):
 # param : key_name, flags, time, bytes, value
 def pushCache(q, backup_host, backup_port):
     global push_count, push_count_success
+    print('push', backup_host, backup_port)
     createSocket(2, backup_host, backup_port)
     push_count = 0
     push_count_success = 0
@@ -162,7 +202,7 @@ def pushCache(q, backup_host, backup_port):
             if cache_data == 'finish':
                 break
             push_count += 1
-            rm_server.send(cmd_set.format(*cache_data[:-1]).encode()+cache_data[-1]+cmd_set_foot)
+            rm_server.send(b'set ' + cache_data[0] + cmd_set.format(*cache_data[1:-2]).encode()+ cache_data[-2]+ b'\r\n' +cache_data[-1]+cmd_set_foot)
             try:
                 response = rm_server.recv(64)
                 if response in CMD_STORED:
@@ -189,6 +229,7 @@ def checkBackupFile(file_path, file_name):
         file_name = 'mem.mem'
     abs_path = splitTrans(os.path.join(file_path, file_name))
     if not os.path.isfile(abs_path):
+        print('cann\'t find file :', abs_path)
         sys.exit() 
     return abs_path
 
@@ -212,7 +253,6 @@ def checkAndCreateFile(path, name):
 # utils
 # translate split char by os 
 def splitTrans(param):
-    print(param)
     if param:
         if os.name == 'posix':
             return param.replace('\\', '/')
@@ -243,8 +283,13 @@ def readFile(q, file_path):
                 tmp = pickle.load(backup_file)
                 if tmp:
                     q.put(tmp)
-        except Exception:
+        except Exception as e:
+            print('read file error:', e)
+            # read file last will throw Exception because cann't get data  
+        finally:
             q.put('finish')
+            if backup_file:
+               backup_file.close()
             # pickle Exception in over 
 
 
@@ -258,27 +303,31 @@ def backupMemServer(q):
         items_size = len(cache_items)
         items_count = 0
         cache_data = 0
+        session_count = 0
+        session_cache_count = 0
+        session_set = 0
         for curr_item in cache_items:
             keys = getKeys(*curr_item)
             keys_size = curr_item[1]
             key_count = 0
+            if not keys:
+                continue
             for curr_key in keys:
                 tmp_data = getData(curr_key)
            
                 if tmp_data:
-                    exp_time = tmp_data[2]
-                    if int(exp_time) < mem_max_time:
-                        tmp_data[2] = int(exp_time) - mem_curr_time
+                    exp_time = int(tmp_data[2])
+                    if exp_time < mem_max_time:
+                        tmp_data[2] = exp_time - mem_curr_time
                     else:
                         tmp_data[2] = 0
                     q.put(tmp_data)
                     key_count += 1
                     cache_data += 1
-            print('item %s number %s compile %s' % (curr_item[0], curr_item[1], key_count))
+            print('item %s number %s complete %s' % (curr_item[0], curr_item[1], key_count))
             items_count += 1
         total_cache_data = sum([int(v[1]) for v in cache_items])
-        print('items total %s compile %s , total cache data %s compile %s' % (items_size, items_count, total_cache_data, cache_data))
-        q.put('finish')
+        print('items total %s complete %s , total cache data %s complete %s' % (items_size, items_count, total_cache_data, cache_data))
     except Exception as e:
         raise e
     finally:
@@ -324,6 +373,7 @@ if __name__ == '__main__':
             pw.start()
             backupMemServer(q)
             pw.join()
+            print('backup file finish')
         elif '2' == operat_type:
             pp = Process(target=pushCache, args=(q, backup_host, backup_port))
             pp.start()
