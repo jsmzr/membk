@@ -3,14 +3,22 @@
 在安装了python的情况下，直接执行以下命令：
 python app.py -h ```memcahehost``` -p ```memcache port``` -t ```bcakup type```
 ```python
+                             _      _    
+                            | |    | |   
+ _ __ ___    ___  _ __ ___  | |__  | | __
+| '_ ` _ \  / _ \| '_ ` _ \ | '_ \ | |/ /
+| | | | | ||  __/| | | | | || |_) ||   < 
+|_| |_| |_| \___||_| |_| |_||_.__/ |_|\_\
+                             @by jiurongzhao            
+
   -h --mem_host: memcahe server host address
             -p --mem_port: memcache server port 
             -n --name: backup file name
             -pa --path: backup file path
             -t --type: operation 
-                                1 : backup data to local file
-                                2 : backup data to remote memcache server
-                                3 : backup data to remote memcache server by local file
+                1 : backup data to local file
+                2 : backup data to remote memcache server
+                3 : backup data to remote memcache server by local file
             -bh --backup_host: backup host address
             -bp --backup_port: backup port 
 ```
