@@ -58,6 +58,15 @@ itme:
 VALUE <key> <flags> <bytes>
 <data> 
 '''
+logo = '''
+                             _      _    
+                            | |    | |   
+ _ __ ___    ___  _ __ ___  | |__  | | __
+| '_ ` _ \  / _ \| '_ ` _ \ | '_ \ | |/ /
+| | | | | ||  __/| | | | | || |_) ||   < 
+|_| |_| |_| \___||_| |_| |_||_.__/ |_|\_\\
+                          @by jiurongzhao  
+'''
 
 def usage():
     print('''
@@ -68,9 +77,9 @@ def usage():
             -n --name: backup file name
             -pa --path: backup file path
             -t --type: operation 
-                                1 : backup data to local file
-                                2 : backup data to remote memcache server
-                                3 : backup data to remote memcache server by local file
+                  1 : backup data to local file
+                  2 : backup data to remote memcache server
+                  3 : backup data to remote memcache server by local file
             -bh --backup_host: backup host address
             -bp --backup_port: backup port 
 
@@ -336,6 +345,7 @@ def backupMemServer(q):
 
 
 if __name__ == '__main__':
+    print(logo)
     argv = sys.argv
     argv_len = len(sys.argv[1:])
     if argv_len == 0 or argv_len % 2 != 0:
