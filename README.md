@@ -2,7 +2,7 @@
 
 在安装了python的情况下，直接执行以下命令：
 python app.py -h ```memcahehost``` -p ```memcache port``` -t ```bcakup type```
-```python
+```
                              _      _    
                             | |    | |   
  _ __ ___    ___  _ __ ___  | |__  | | __
